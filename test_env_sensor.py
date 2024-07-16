@@ -1,6 +1,8 @@
 import smbus2
 import qwiic_bme280
 import time
+import requests
+import json
 
 # Initialize the BME280 sensor
 bme280 = qwiic_bme280.QwiicBme280()
@@ -63,6 +65,12 @@ def read_ens160_data():
 # Initialize the ENS160 sensor
 initialize_ens160()
 
+def send_data(aqi, temperature, tvoc, co2, humidity, pressure):
+    url = "http://localhost:5001/environmental-data"
+    data = {"aqi": aqi, "temperature": temperature, "tvoc": tvoc, "co": co2, "humidity": humidity, "pressure": pressure}
+    headers = {'Content-Type': 'application/json'}
+    response = requests.post(url, data=json.dumps(data), headers=headers)
+
 while True:
     # Read data from BME280
     temperature = bme280.temperature_celsius
@@ -71,6 +79,7 @@ while True:
 
     # Read data from ENS160
     air_quality_index, tvoc, eco2 = read_ens160_data()
+    send_data(air_quality_index, temperature, tvoc, eco2, humidity, pressure)
 
     if air_quality_index is not None:
         # Print ENS160 data
