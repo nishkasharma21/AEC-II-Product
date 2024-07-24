@@ -11,6 +11,7 @@ from PIL import Image
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
+from webcam import detect_objects
 
 output_latency = 0
 input_latency = 0
@@ -49,6 +50,23 @@ def get_data():
 # Global variable to store the latest frame
 latest_frame = None
 
+# @app.route('/raspi_to_flask_camera', methods=['POST'])
+# def video_feed():
+#     global latest_frame
+#     try:
+#         # Read the frame from the request
+#         file = request.files['frame'].read()
+#         npimg = np.frombuffer(file, np.uint8)
+#         frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+
+#         # Update the latest frame
+#         latest_frame = frame
+
+#         return Response(status=200)
+#     except Exception as e:
+#         print(f"Error processing frame: {e}")
+#         return Response(status=500)
+
 @app.route('/raspi_to_flask_camera', methods=['POST'])
 def video_feed():
     global latest_frame
@@ -57,10 +75,17 @@ def video_feed():
         file = request.files['frame'].read()
         npimg = np.frombuffer(file, np.uint8)
         frame = cv2.imdecode(npimg, cv2.IMREAD_COLOR)
+        
+        # Run ML model detection (dummy example here)
+        detections = detect_objects(frame)  # Replace with actual detection function
 
-        # Update the latest frame
+        # Draw bounding boxes and labels on the frame
+        for detection in detections:
+            x, y, w, h, label = detection
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+        
         latest_frame = frame
-
         return Response(status=200)
     except Exception as e:
         print(f"Error processing frame: {e}")
