@@ -13,6 +13,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import uuid
 from webcam import detect_objects
 from queue import Queue
+import json
 
 output_latency = 0
 input_latency = 0
@@ -586,7 +587,163 @@ def get_user_groups():
     finally:
         conn.close()
 
+@app.route('/get_group_events', methods=['GET'])
+def get_group_events():
+    user_id = request.args.get('user_id')
+    if not user_id:
+        return jsonify({'message': 'User ID is required'}), 400
 
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+
+    try:
+        # Fetch the group events
+        cursor.execute('''
+            SELECT id, event_ids FROM groups WHERE admin_id = ? OR user_ids LIKE ?
+        ''', (str(user_id), f'%,{user_id},%'))
+        groups = cursor.fetchall()
+
+        if not groups:
+            return jsonify({'message': 'No groups found for the user'}), 404
+
+        # Collect events for each group
+        events = []
+        for group in groups:
+            group_id, event_ids = group
+            if event_ids:
+                event_ids_list = event_ids.split(',')
+            else:
+                event_ids_list = []
+
+            # Fetch events by IDs
+            for event_id in event_ids_list:
+                cursor.execute('SELECT * FROM events WHERE id = ?', (event_id,))
+                event = cursor.fetchone()
+                if event:
+                    events.append({
+                        'id': event[0],
+                        'type': event[1],
+                        'date': event[2],
+                        'video': event[3]
+                    })
+
+        conn.close()
+        return jsonify({'events': events}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/create_event', methods=['POST'])
+def create_event():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'message': 'No JSON data received'}), 400
+
+        event_type = data.get('type')
+        event_date = data.get('date')
+        event_video = data.get('video')
+        #user_id = session.get('user_id')
+        user_id = 1  # Use the appropriate user ID from your authentication logic
+
+        if not event_type or not event_date or not event_video:
+            return jsonify({'message': 'All event details are required'}), 400
+
+        conn = sqlite3.connect('users.db')
+        cursor = conn.cursor()
+
+        # Insert the new event into the events table
+        cursor.execute('''
+            INSERT INTO events (type, date, video)
+            VALUES (?, ?, ?)
+        ''', (event_type, event_date, event_video))
+        event_id = cursor.lastrowid
+
+        # Fetch the current event IDs for the user's groups
+        cursor.execute('''
+            SELECT id, event_ids FROM groups WHERE admin_id = ? OR user_ids LIKE ?
+        ''', (user_id, f'%,{user_id},%'))
+        groups = cursor.fetchall()
+
+        if not groups:
+            return jsonify({'message': 'No groups found for the user'}), 404
+
+        # Update event IDs for each group
+        for group in groups:
+            group_id, event_ids = group
+            if event_ids:
+                event_ids_list = event_ids.split(',')
+            else:
+                event_ids_list = []
+            event_ids_list.append(str(event_id))
+            new_event_ids = ','.join(event_ids_list)
+            cursor.execute('UPDATE groups SET event_ids = ? WHERE id = ?', (new_event_ids, group_id))
+
+        conn.commit()
+        conn.close()
+
+        return jsonify({'message': 'Event created successfully', 'event_id': event_id}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/check_user_group_status', methods=['GET'])
+def check_user_group_status():
+    try:
+        user_id = session.get('user_id')  # Get the current user's ID from the authentication system
+
+        conn = sqlite3.connect('users.db')
+        cursor = conn.cursor()
+
+        # Check if the user is an admin of any group
+        cursor.execute('''
+            SELECT id FROM groups WHERE admin_id = ?
+        ''', (user_id,))
+        is_admin = cursor.fetchone() is not None
+
+        # Check if the user is a member of any group
+        cursor.execute('''
+            SELECT group_id FROM group_members WHERE user_id = ?
+        ''', (user_id,))
+        is_member = cursor.fetchone() is not None
+
+        conn.close()
+
+        # Return JSON response indicating if the user is either an admin or a member
+        return jsonify({'status': is_admin or is_member})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+@app.route('/get_user_group', methods=['GET'])
+def get_user_group():
+    try:
+        # For demonstration, assume the user ID is provided in the query parameters
+        user_id = session.get('user_id')
+        if not user_id:
+            return jsonify({'message': 'User ID is required'}), 400
+
+        conn = sqlite3.connect('users.db')
+        cursor = conn.cursor()
+
+        # Query to find the group where the user is either an admin or a member
+        cursor.execute('''
+            SELECT g.name
+            FROM groups g
+            WHERE g.admin_id = ? OR g.user_ids LIKE ?
+        ''', (user_id, f'%,{user_id},%'))
+
+        group = cursor.fetchone()
+        conn.close()
+
+        if group:
+            return jsonify({'group_name': group[0]}), 200
+        else:
+            return jsonify({'message': 'User is not part of any group'}), 404
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(host='192.168.1.95', debug=True, port=8000)
