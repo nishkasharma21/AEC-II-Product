@@ -233,7 +233,7 @@ def index():
 
 #     return Response(sound())
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 import sqlite3
 import secrets
@@ -262,10 +262,20 @@ def init_db():
                 name TEXT UNIQUE NOT NULL,
                 admin_id INTEGER NOT NULL UNIQUE,  -- Unique constraint on admin_id
                 user_ids TEXT,
+                event_ids TEXT, 
                 FOREIGN KEY (admin_id) REFERENCES users (id)
             )
         ''')
-        
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                type TEXT NOT NULL,
+                date TEXT NOT NULL,  -- Using TEXT to store date in ISO 8601 format (e.g., "2024-07-25")
+                video TEXT           -- Store video URL or path
+            )
+        ''')
+
         conn.commit()
 
 init_db()
@@ -277,7 +287,7 @@ def sign_up():
     password = data.get('password')
 
     if not email or not password:
-        return jsonify({'message': 'Email and password are required'}), 400
+        return jsonify({'message': 'Email and password are required'}), 400 
 
     try:
         with sqlite3.connect('users.db') as conn:
@@ -287,7 +297,15 @@ def sign_up():
                 VALUES (?, ?)
             ''', (email, password))
             conn.commit()
-        return jsonify({'message': 'Sign up successful!'}), 200
+
+            # Get the user_id of the newly inserted user
+            cursor.execute('SELECT last_insert_rowid()')
+            user_id = cursor.fetchone()[0]
+
+            # Store the user_id in the session
+            session['user_id'] = user_id
+
+        return jsonify({'message': 'Sign up successful!', 'user_id': user_id}), 200
     except sqlite3.IntegrityError:
         return jsonify({'message': 'Email already exists'}), 400
 
@@ -321,136 +339,255 @@ def logout():
 @app.route('/create_group', methods=['POST'])
 def create_group():
     if 'user_id' not in session:
-        return jsonify({'message': 'Unauthorized'}), 401
+        return jsonify({'message': 'Unauthorized', 'status': 401}), 401
 
     data = request.json
     group_name = data.get('group_name')
 
     if not group_name:
-        return jsonify({'message': 'Group name is required'}), 400
+        return jsonify({'message': 'Group name is required', 'status': 400}), 400
 
     try:
         with sqlite3.connect('users.db') as conn:
             cursor = conn.cursor()
+            # Check if the user has already created a group
             cursor.execute('''
-                INSERT INTO groups (name, admin_id, user_ids)
-                VALUES (?, ?, ?)
-            ''', (group_name, session['user_id'], str(session['user_id'])))
+                SELECT id FROM groups WHERE admin_id = ?
+            ''', (session['user_id'],))
+            existing_group = cursor.fetchone()
+
+            if existing_group:
+                return jsonify({'message': 'User already created a group', 'status': 400}), 400
+
+            cursor.execute('''
+                INSERT INTO groups (name, admin_id)
+                VALUES (?, ?)
+            ''', (group_name, session['user_id']))
             group_id = cursor.lastrowid  # Get the id of the newly created group
+            print(group_id)
             conn.commit()
-        return jsonify({'message': 'Group created successfully!', 'group_id': group_id}), 200
-    except sqlite3.IntegrityError:
-        return jsonify({'message': 'Group name already exists'}), 400
-    
-# @app.route('/groups', methods=['GET'])
-# def get_groups():
-#     # Ensure user_id is provided in the query parameters
-#     user_id = request.args.get('user_id', type=int)
-#     if not user_id:
-#         return jsonify({"message": "User ID is required"}), 400
+        return jsonify({'message': 'Group created successfully!', 'group_id': group_id, 'status': 200}), 200
+    except sqlite3.IntegrityError as e:
+        # Log the specific error for debugging purposes
+        print(f'SQLite Integrity Error: {e}')
+        return jsonify({'message': 'Group name already exists', 'status': 400}), 400
+    except Exception as e:
+        # Log any other exceptions that occur
+        print(f'Unexpected Error: {e}')
+        return jsonify({'message': 'Internal server error', 'status': 500}), 500
 
-#     # Establish a connection to the database
-#     conn = sqlite3.connect('users.db')
-#     conn.row_factory = sqlite3.Row
-#     cursor = conn.cursor()
+@app.route('/add_user_to_group', methods=['POST'])
+def add_user_to_group():
+    if 'user_id' not in session:
+        return jsonify({'message': 'Unauthorized'}), 401
 
-#     # Fetch the groups for the given user_id
-#     cursor.execute('''
-#         SELECT u.id, u.email
-#         FROM users u
-#         JOIN user_groups ug ON u.id = ug.user_id
-#         WHERE ug.group_id = (SELECT group_id FROM user_groups WHERE user_id = ? LIMIT 1)
-#     ''', (user_id,))
-#     users = cursor.fetchall()
-#     conn.close()
+    data = request.json
+    group_id = data.get('group_id')
+    user_email = data.get('user_email')
 
-#     # Format the response
-#     result = []
-#     for user in users:
-#         result.append({
-#             "id": user["id"],
-#             "email": user["email"]
-#         })
+    if not group_id or not user_email:
+        return jsonify({'message': 'Group ID and user email are required'}), 400
 
-#     return jsonify(result)
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
 
-# @app.route('/add_user_to_group', methods=['POST'])
-# def add_user_to_group():
-#     if 'user_id' not in session:
-#         return jsonify({'message': 'Unauthorized'}), 401
+    try:
+        # Get the admin ID for the group
+        cursor.execute('''
+            SELECT admin_id FROM groups WHERE id = ?
+        ''', (group_id,))
+        group = cursor.fetchone()
 
-#     data = request.json
-#     group_id = data.get('group_id')
-#     user_email = data.get('user_email')
+        if not group:
+            return jsonify({'message': 'Group not found'}), 404
+        
+        if group[0] != session['user_id']:
+            return jsonify({'message': 'Unauthorized'}), 401
 
-#     if not group_id or not user_email:
-#         return jsonify({'message': 'Group ID and user email are required'}), 400
+        # Get the user ID for the provided email
+        cursor.execute('''
+            SELECT id FROM users WHERE email = ?
+        ''', (user_email,))
+        user = cursor.fetchone()
 
-#     with sqlite3.connect('users.db') as conn:
-#         cursor = conn.cursor()
-#         cursor.execute('''
-#             SELECT admin_id FROM groups WHERE id = ?
-#         ''', (group_id,))
-#         group = cursor.fetchone()
+        if not user:
+            return jsonify({'message': 'User not found'}), 404
 
-#         if not group or group[0] != session['user_id']:
-#             return jsonify({'message': 'Unauthorized or group not found'}), 401
+        user_id = user[0]
 
-#         cursor.execute('''
-#             SELECT id FROM users WHERE email = ?
-#         ''', (user_email,))
-#         user = cursor.fetchone()
+        # Get the current user ID
+        current_user_id = session['user_id']
 
-#         if not user:
-#             return jsonify({'message': 'User not found'}), 404
+        # Get the list of user IDs already in the group
+        cursor.execute('''
+            SELECT user_ids FROM groups WHERE id = ?
+        ''', (group_id,))
+        group = cursor.fetchone()
 
-#         try:
-#             cursor.execute('''
-#                 INSERT INTO user_groups (user_id, group_id)
-#                 VALUES (?, ?)
-#             ''', (user[0], group_id))
-#             conn.commit()
-#             return jsonify({'message': 'User added to group successfully!'}), 200
-#         except sqlite3.IntegrityError:
-#             return jsonify({'message': 'User already in group'}), 400
+        user_ids = group[0]
+        if user_ids:
+            user_ids_list = user_ids.split(',')
+        else:
+            user_ids_list = []
 
-# @app.route('/remove_user_from_group', methods=['POST'])
-# def remove_user_from_group():
-#     if 'user_id' not in session:
-#         return jsonify({'message': 'Unauthorized'}), 401
+        print(user_ids_list)
 
-#     data = request.json
-#     group_id = data.get('group_id')
-#     user_email = data.get('user_email')
+        if str(user_id) not in user_ids_list:
+            user_ids_list.append(str(user_id))
+            updated_user_ids = ','.join(user_ids_list)
 
-#     if not group_id or not user_email:
-#         return jsonify({'message': 'Group ID and user email are required'}), 400
+            cursor.execute('''
+                UPDATE groups SET user_ids = ? WHERE id = ?
+            ''', (updated_user_ids, group_id))
+            conn.commit()
 
-#     with sqlite3.connect('users.db') as conn:
-#         cursor = conn.cursor()
-#         cursor.execute('''
-#             SELECT admin_id FROM groups WHERE id = ?
-#         ''', (group_id,))
-#         group = cursor.fetchone()
+            return jsonify({'message': 'User added to group successfully!'}), 200
+        else:
+            return jsonify({'message': 'User already in group'}), 400
 
-#         if not group or group[0] != session['user_id']:
-#             return jsonify({'message': 'Unauthorized or group not found'}), 401
+    except sqlite3.Error as e:
+        conn.rollback()
+        return jsonify({'error': str(e)}), 500
 
-#         cursor.execute('''
-#             SELECT id FROM users WHERE email = ?
-#         ''', (user_email,))
-#         user = cursor.fetchone()
+    finally:
+        conn.close()
 
-#         if not user:
-#             return jsonify({'message': 'User not found'}), 404
 
-#         cursor.execute('''
-#             DELETE FROM user_groups WHERE user_id = ? AND group_id = ?
-#         ''', (user[0], group_id))
-#         conn.commit()
-#         return jsonify({'message': 'User removed from group successfully!'}), 200
+@app.route('/get_group_emails', methods=['GET'])
+def get_group_emails():
+    group_id = request.args.get('group_id')
+
+    if not group_id:
+        return jsonify({'message': 'Group ID is required'}), 400
+
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute('''
+            SELECT user_ids FROM groups WHERE id = ?
+        ''', (group_id,))
+        group = cursor.fetchone()
+
+        if not group or not group[0]:
+            return jsonify({'message': 'Group not found or no users in group'}), 404
+
+        user_ids = group[0].split(',')
+        if not user_ids:
+            return jsonify({'emails': []}), 200
+
+        cursor.execute(f'''
+            SELECT email FROM users WHERE id IN ({','.join(['?']*len(user_ids))})
+        ''', user_ids)
+        emails = cursor.fetchall()
+
+        email_list = [email[0] for email in emails]
+
+        return jsonify({'emails': email_list}), 200
+
+    except sqlite3.Error as e:
+        return jsonify({'error': str(e)}), 500
+
+    finally:
+        conn.close()
+
+
+@app.route('/remove_user_from_group', methods=['POST'])
+def remove_user_from_group():
+    data = request.get_json()
+    group_id = data.get('group_id')
+    email = data.get('email')
+
+    if not group_id or not email:
+        return jsonify({'message': 'Group ID and Email are required'}), 400
+
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+
+    try:
+        # Get the user ID from the email
+        cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
+        user = cursor.fetchone()
+        if not user:
+            return jsonify({'message': 'User not found'}), 404
+        user_id = str(user[0])
+
+        # Get the group admin ID and current user IDs
+        cursor.execute('''
+            SELECT admin_id, user_ids FROM groups WHERE id = ?
+        ''', (group_id,))
+        group = cursor.fetchone()
+        if not group:
+            return jsonify({'message': 'Group not found'}), 404
+
+        group_admin_id, user_ids = group
+        print(group_admin_id)
+        print(user_id)
+
+        current_user_id = session['user_id']
+        if str(current_user_id) != str(group_admin_id):
+            return jsonify({'message': 'Only the group admin can remove users'}), 403
+
+        # Get the user ID of the user to be removed
+        cursor.execute('SELECT id FROM users WHERE email = ?', (email,))
+        user_to_remove = cursor.fetchone()
+        if not user_to_remove:
+            return jsonify({'message': 'User not found'}), 404
+        user_to_remove_id = str(user_to_remove[0])
+
+        # Remove the user ID from the list
+        user_ids_list = user_ids.split(',')
+        if user_to_remove_id in user_ids_list:
+            user_ids_list.remove(user_to_remove_id)
+        else:
+            return jsonify({'message': 'User not in group'}), 404
+
+        # Update the group with the new user_ids
+        new_user_ids = ','.join(user_ids_list)
+        cursor.execute('UPDATE groups SET user_ids = ? WHERE id = ?', (new_user_ids, group_id))
+        conn.commit()
+
+        return jsonify({'message': 'User removed from group'}), 200
+
+    except sqlite3.Error as e:
+        return jsonify({'error': str(e)}), 500
+
+    finally:
+        conn.close()
+
+@app.route('/get_user_groups', methods=['GET'])
+def get_user_groups():
+    user_id = request.args.get('user_id')
+
+    if not user_id:
+        return jsonify({'message': 'User ID is required'}), 400
+
+    conn = sqlite3.connect('users.db')
+    cursor = conn.cursor()
+
+    try:
+        # Fetch groups where the user is an admin
+        cursor.execute('''
+            SELECT id, name FROM groups WHERE admin_id = ?
+        ''', (user_id,))
+        groups = cursor.fetchall()
+
+        if not groups:
+            return jsonify({'admin_groups': []}), 200
+
+        # Create a list of dictionaries with groupId and groupName
+        admin_groups = [{'id': group[0], 'name': group[1]} for group in groups]
+
+        return jsonify({'admin_groups': admin_groups}), 200
+
+    except sqlite3.Error as e:
+        return jsonify({'error': str(e)}), 500
+
+    finally:
+        conn.close()
+
 
 
 if __name__ == '__main__':
-    app.run(host='172.20.10.2', debug=True, port=8000)
+    app.run(host='192.168.1.95', debug=True, port=8000)
 
