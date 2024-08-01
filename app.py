@@ -192,6 +192,16 @@ def video_stream():
     return Response(generate(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+@app.route('/latest_frame')
+def latest_frame_route():
+    global latest_frame
+    if latest_frame is not None:
+        _, jpeg = cv2.imencode('.jpg', latest_frame)
+        frame = jpeg.tobytes()
+        return Response(frame, mimetype='image/jpeg')
+    else:
+        return jsonify({'error': 'No frame available'}), 404
+
 @app.route('/notifications', methods=['GET'])
 def get_notifications():
     if not notification_queue.empty():
@@ -619,8 +629,14 @@ def get_group_events():
     try:
         # Fetch the group events
         cursor.execute('''
-            SELECT id, event_ids FROM groups WHERE admin_id = ? OR user_ids LIKE ?
-        ''', (str(user_id), f'%,{user_id},%'))
+            SELECT id, event_ids 
+            FROM groups 
+            WHERE admin_id = ? 
+            OR user_ids LIKE ? 
+            OR user_ids LIKE ? 
+            OR user_ids LIKE ? 
+            OR user_ids = ?
+        ''', (str(user_id), f'{user_id},%', f'%,{user_id},%', f'%,{user_id}', user_id))
         groups = cursor.fetchall()
 
         if not groups:
@@ -669,8 +685,7 @@ def create_event():
         event_preview = preview_path
         print(event_video)
         print(event_preview)
-        #user_id = session.get('user_id')
-        user_id = 1  # Use the appropriate user ID from your authentication logic
+        user_id = session.get('user_id')
 
         if not event_type or not event_date or not event_video or not event_preview:
             return jsonify({'message': 'All event details are required'}), 400
@@ -729,14 +744,22 @@ def check_user_group_status():
         is_admin = cursor.fetchone() is not None
 
         # Check if the user is a member of any group
+        # Check if the user is a member of any group
         cursor.execute('''
-            SELECT id FROM groups WHERE user_ids LIKE ?
-        ''', (f'%,{user_id},%',))
+            SELECT id FROM groups 
+            WHERE user_ids LIKE ? 
+            OR user_ids LIKE ? 
+            OR user_ids LIKE ? 
+            OR user_ids = ?
+        ''', (f'{user_id},%', f'%,{user_id},%', f'%,{user_id}', user_id))
         is_member = cursor.fetchone() is not None
+        print(cursor.fetchall())
 
         conn.close()
 
         status = is_admin or is_member
+        print(is_admin)
+        print(is_member)
         # Return JSON response indicating if the user is either an admin or a member
         return jsonify({'status': status})
 
@@ -758,8 +781,12 @@ def get_user_group():
         cursor.execute('''
             SELECT g.name
             FROM groups g
-            WHERE g.admin_id = ? OR g.user_ids LIKE ?
-        ''', (user_id, f'%,{user_id},%'))
+            WHERE g.admin_id = ? 
+            OR g.user_ids LIKE ?
+            OR g.user_ids LIKE ?
+            OR g.user_ids LIKE ?
+            OR g.user_ids = ?
+        ''', (user_id, f'{user_id},%', f'%,{user_id},%', f'%,{user_id}', user_id))
 
         group = cursor.fetchone()
         conn.close()
