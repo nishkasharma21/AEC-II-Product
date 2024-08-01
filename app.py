@@ -1,5 +1,7 @@
 from flask import Flask, request, jsonify, Response, render_template, session, send_file
 import pyaudio
+import requests
+import threading
 import torch
 import os
 import cv2
@@ -119,7 +121,7 @@ def video_feed():
         append_frame = current_time <= gun_detection_end_time
 
         # Process detections
-        new_gun_present = any(label.startswith('gun') or label.startswith('rifle') for _, _, _, _, label in detections)
+        new_gun_present = any(label.startswith('gun') or label.startswith('rifle') or label.startswith('fire') for _, _, _, _, label in detections)
         if(new_gun_present):
             print("THERES A GUN! RUN!!!")
         # no guns past or present - do nothing
@@ -149,13 +151,12 @@ def video_feed():
             file_name += 1
             video_path = 'gun_detected_video'+str(file_name)+'.mp4'
             fourcc = cv2.VideoWriter_fourcc(*'XVID')
-            video_writer = cv2.VideoWriter(video_path, fourcc, 1, (frame.shape[1], frame.shape[0]))
+            video_writer = cv2.VideoWriter(video_path, fourcc, 10, (frame.shape[1], frame.shape[0]))
             preview_path = 'first_frame_'+str(file_name)+'.jpg'
             print(f"Collect a new recording at {video_path}")
             last_notification_time = current_time
             save_thumbnail(preview_path, frame)
             send_notification()
-
 
         # Draw bounding boxes and labels on the frame
         for detection in detections:
@@ -230,15 +231,18 @@ def audio():
     audio_queue.put(data)
     return '', 204
 
-@app.route('/audio_feed')
+@app.route('/audio_feed',  methods=['GET'])
 def audio_feed():
     def generate_audio():
         header = generate_header(RATE, 16, CHANNELS)
         yield header
         while True:
+            print("get here")
             data = audio_queue.get()
             yield data
     return Response(generate_audio(), mimetype='audio/wav')
+
+
 
 from flask import Flask, request, jsonify, session
 from flask_cors import CORS
