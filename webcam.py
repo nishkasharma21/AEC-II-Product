@@ -39,39 +39,48 @@
 # cap.release()
 # cv2.destroyAllWindows()
 
-import cv2
-import torch
-import os
-import numpy as np
+# # import cv2
+# # import torch
+# # import os
+# # import numpy as np
 
-# Set model path to point to the correct path for best.pt
-model_path = os.path.join('exp7', 'weights', 'best.pt')
+# # # Set model path to point to the correct path for best.pt
+# # model_path = os.path.join('exp7', 'weights', 'best.pt')
 
-# Load the pre-trained YOLOv5 model with the fixed checkpoint
-model = torch.hub.load('yolov5', 'custom', path=model_path, source='local')
+# # # Load the pre-trained YOLOv5 model with the fixed checkpoint
+# # model = torch.hub.load('yolov5', 'custom', path=model_path, source='local')
 
-# Set the confidence threshold
-model.conf = 0.35
+# # # Set the confidence threshold
+# # model.conf = 0.35
 
-def detect_objects(frame):
-    """
-    Perform object detection on the provided frame using YOLOv5.
+# # # Variables to track gun detection state and timestamps
+# # gun_detected = False
+# # gun_detected_start_time = 0
+# # last_notification_time = 0
+
+# # # Time thresholds (in seconds)
+# # detection_threshold = 3
+# # notification_cooldown = 30
+
+# # def detect_objects(frame):
+# #     """
+# #     Perform object detection on the provided frame using YOLOv5.
     
-    Args:
-        frame (numpy.ndarray): The frame to process.
+# #     Args:
+# #         frame (numpy.ndarray): The frame to process.
 
-    Returns:
-        list: List of detection results. Each result is a tuple (xmin, ymin, xmax, ymax, confidence, label).
-    """
-    # Perform inference
-    results = model(frame)
+# #     Returns:
+# #         list: List of detection results. Each result is a tuple (xmin, ymin, xmax, ymax, confidence, label).
+# #     """
+# #     # Perform inference
+# #     results = model(frame)
 
-    detections = []
-    # Parse results
-    for pred in results.pred[0]:
-        xmin, ymin, xmax, ymax, conf, cls = pred
-        if conf >= 0.35:  # Apply confidence threshold
-            label = results.names[int(cls)]
-            detections.append((int(xmin), int(ymin), int(xmax - xmin), int(ymax - ymin), f'{label} {conf:.2f}'))
+# #     detections = []
+# #     # Parse results
+# #     for pred in results.pred[0]:
+# #         xmin, ymin, xmax, ymax, conf, cls = pred
+# #         if conf >= 0.35:  # Apply confidence threshold
+# #             label = results.names[int(cls)]
+# #             detections.append((int(xmin), int(ymin), int(xmax - xmin), int(ymax - ymin), f'{label} {conf:.2f}'))
     
-    return detections
+# #     return detections
